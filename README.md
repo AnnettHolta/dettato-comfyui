@@ -5,6 +5,32 @@ pop song with vocals) and it writes a MIDI file with one track per instrument, e
 with a General MIDI program), plus a drum track that covers drum kits and orchestral percussion, with timpani written at their
 pitch.
 
+![Composite F1 on all nine benchmark sets, and every system on every set it reports](docs/figures/bench_all_sets.png)
+
+Nine public benchmark sets: the eight of the MuScriptor paper's Table 2 (Bach10, Dagstuhl ChoirSet, PHENICX-Anechoic, RWC
+Popular, Classical, Genre, Jazz and Royalty-Free) plus Slakh2100 test, scored by that paper's rules. The composite is the mean of
+note-onset, note-frame, note-offset and drum F1.
+
+| system | parameters | composite | onset | frame | offset | drums |
+|---|---|---|---|---|---|---|
+| **Dettato transcriber + drums** | 20.3M | **59.2** (95% 57.9-60.6) | **67.2** | **77.9** | **44.8** | **47.1** |
+| MuScriptor | 1.3B | 45.1 | 48.6 | 70.2 | 27.8 | 34.0 |
+
+On the three sets Mirelo A2M v1.1 Pro reports (PHENICX-Anechoic, RWC Classical, RWC Royalty-Free), with all four systems: dettato
+60.8, Mirelo A2M 56.1 (self-reported), MuScriptor 47.4, YourMT3+ 45.7.
+
+![The three sets Mirelo A2M reports: composite and each measure for dettato, Mirelo A2M, MuScriptor and YourMT3+](docs/figures/bench_mirelo_sets.png)
+
+On the eight MuScriptor sets alone: 58.4, against 44.6 for MuScriptor and 41.1 for YourMT3+ (the paper's numbers). Per-set tables
+are on the [dettato](https://huggingface.co/kobimusic/dettato) and [dettato-drums](https://huggingface.co/kobimusic/dettato-drums)
+cards.
+
+What was measured: the table scores the transcriber's notes and the drum model's hits. The evidence repairer was measured on its own
+(+0.30 composite with the transcriber's base network in front) and the grouper on an internal track benchmark; see their cards.
+The four models chained as this package runs them have not been scored as one system yet.
+
+## Install
+
 ```bash
 pip install git+https://github.com/kobimusic/dettato
 dettato song.mp3 -o out/        # -> out/song.mid + out/song.json
@@ -24,32 +50,6 @@ Four models, 28.1M parameters in all, collected in [kobimusic/Dettato](https://h
 | 2 | [kobimusic/dettato-evidence](https://huggingface.co/kobimusic/dettato-evidence) | 4.9M | repairs the notes using the transcriber's own evidence: drops wrong notes, fixes onsets and ends, adds missed notes |
 | 3 | [kobimusic/dettato-grouper](https://huggingface.co/kobimusic/dettato-grouper) | 2.9M | puts every note in an instrument track and names the instrument |
 | 4 | [kobimusic/dettato-drums](https://huggingface.co/kobimusic/dettato-drums) | 5.0M | drum hits on General MIDI drum keys, drum kits and orchestral percussion |
-
-## Results
-
-Nine public benchmark sets: the eight of the MuScriptor paper's Table 2 (Bach10, Dagstuhl ChoirSet, PHENICX-Anechoic, RWC
-Popular, Classical, Genre, Jazz and Royalty-Free) plus Slakh2100 test, scored by that paper's rules. The composite is the mean of
-note-onset, note-frame, note-offset and drum F1.
-
-| system | parameters | composite | onset | frame | offset | drums |
-|---|---|---|---|---|---|---|
-| **Dettato transcriber + drums** | 20.3M | **59.2** (95% 57.9-60.6) | **67.2** | **77.9** | **44.8** | **47.1** |
-| MuScriptor | 1.3B | 45.1 | 48.6 | 70.2 | 27.8 | 34.0 |
-
-![Composite F1 on all nine benchmark sets, and every system on every set it reports](docs/figures/bench_all_sets.png)
-
-On the three sets Mirelo A2M v1.1 Pro reports (PHENICX-Anechoic, RWC Classical, RWC Royalty-Free), with all four systems: dettato
-60.8, Mirelo A2M 56.1 (self-reported), MuScriptor 47.4, YourMT3+ 45.7.
-
-![The three sets Mirelo A2M reports: composite and each measure for dettato, Mirelo A2M, MuScriptor and YourMT3+](docs/figures/bench_mirelo_sets.png)
-
-On the eight MuScriptor sets alone: 58.4, against 44.6 for MuScriptor and 41.1 for YourMT3+ (the paper's numbers). Per-set tables
-are on the [dettato](https://huggingface.co/kobimusic/dettato) and [dettato-drums](https://huggingface.co/kobimusic/dettato-drums)
-cards.
-
-What was measured: the table scores the transcriber's notes and the drum model's hits. The evidence repairer was measured on its own
-(+0.30 composite with the transcriber's base network in front) and the grouper on an internal track benchmark; see their cards.
-The four models chained as this package runs them have not been scored as one system yet.
 
 ## Use
 
