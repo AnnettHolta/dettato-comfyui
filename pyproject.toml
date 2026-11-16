@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dettato"
+version = "2.0.0"
+description = "Multi-instrument audio-to-MIDI transcription: notes, instrument-named tracks and drums from any recording"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "KobiMusic" }]
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.2",
+    "numpy>=1.24",
+    "soundfile>=0.12",
+    "soxr>=0.3",
+    "pretty_midi>=0.2.10",
+    "huggingface_hub>=0.23",
+    "safetensors>=0.4",
+]
+keywords = ["music", "transcription", "audio-to-midi", "automatic-music-transcription", "midi", "drums", "pytorch"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/kobimusic/dettato"
+Models = "https://huggingface.co/kobimusic/dettato"
+
+[project.scripts]
+dettato = "dettato.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

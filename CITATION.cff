@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use Dettato, please cite it as below."
+title: "Dettato: multi-instrument audio-to-MIDI transcription"
+type: software
+authors:
+  - name: "KobiMusic"
+repository-code: "https://github.com/kobimusic/dettato"
+url: "https://huggingface.co/kobimusic/dettato"
+license: Apache-2.0
+version: 2.0.0
+date-released: "2026-11-16"
