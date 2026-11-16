@@ -1,9 +1,34 @@
-# Dettato
+# dettato
 
-Dettato is KobiMusic's multi-instrument audio-to-MIDI transcriber. Give it any recording (a band, an orchestra, a jazz trio, a
-pop song with vocals) and it writes a MIDI file with one track per instrument, each named after its instrument (73 classes, each
-with a General MIDI program), plus a drum track that covers drum kits and orchestral percussion, with timpani written at their
-pitch.
+<p>
+  <a href="https://huggingface.co/collections/kobimusic/dettato"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://huggingface.co/datasets/huggingface/badges/resolve/main/model-on-hf-md-dark.svg">
+    <img alt="Model on Hugging Face" src="https://huggingface.co/datasets/huggingface/badges/resolve/main/model-on-hf-md.svg">
+  </picture></a>
+  <a href="https://huggingface.co/kobimusic"><img alt="Hugging Face: kobimusic" src="https://img.shields.io/badge/Hugging%20Face-kobimusic-FFD21E?logo=huggingface&logoColor=000"></a>
+  <a href="https://kobi.music"><img alt="kobi.music" src="https://img.shields.io/badge/web-kobi.music-B73E6A"></a>
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=fff">
+  <img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-4A4A48">
+</p>
+
+KobiMusic's **dettato** audio-to-MIDI transcriber: any recording in, a multi-track MIDI file out. It writes every note on
+all 88 keys, puts each note in a track named after its instrument, and adds a drum track for drum kits and orchestral
+percussion, with timpani written at their pitch. On nine public benchmark sets it beats MuScriptor 1.3B, the next best
+open model, by 14 points of composite F1 (59.2 vs 45.1) at about 1/65 of its size, and on the three sets Mirelo publishes it
+scores a little above Mirelo A2M v1.1 Pro, a closed model (60.8 vs 56.1).
+
+dettato is four small models in a chain: a **transcriber** (15.3M parameters) that hears the notes, an **evidence repairer**
+(4.9M) that corrects them from the transcriber's own evidence, a **grouper** (2.9M) that builds the instrument tracks, and a
+**drum model** (5.0M); the benchmark figures are the transcriber and the drum model, 20M parameters. The weights are open
+under Apache-2.0, commercial use included, in the [dettato collection](https://huggingface.co/collections/kobimusic/dettato).
+Its training audio is synthetic, rendered from MIDI, apart from fine-tunes on public research datasets that each model card
+lists; no benchmark recording was used for training.
+
+**What to expect.** Benchmarks only go so far: try it on your own music before you rely on it. Splitting instruments into
+the right tracks is its weakest step; on real jazz, for example, a part of a saxophone's notes can land in the piano's track.
+It writes performance MIDI: notes at the times they are played, not quantised to a beat grid or laid out as notation. For
+something you can play from, such as sheet music, [Songscription](https://www.songscription.ai) and [Klangio](https://klang.io)
+are excellent tools.
 
 ![Composite F1 on all nine benchmark sets, and every system on every set it reports](docs/figures/bench_all_sets.png)
 
@@ -13,7 +38,7 @@ note-onset, note-frame, note-offset and drum F1.
 
 | system | parameters | composite | onset | frame | offset | drums |
 |---|---|---|---|---|---|---|
-| **Dettato transcriber + drums** | 20.3M | **59.2** (95% 57.9-60.6) | **67.2** | **77.9** | **44.8** | **47.1** |
+| **dettato transcriber + drums** | 20.3M | **59.2** (95% 57.9-60.6) | **67.2** | **77.9** | **44.8** | **47.1** |
 | MuScriptor | 1.3B | 45.1 | 48.6 | 70.2 | 27.8 | 34.0 |
 
 On the three sets Mirelo A2M v1.1 Pro reports (PHENICX-Anechoic, RWC Classical, RWC Royalty-Free), with all four systems: dettato
@@ -36,13 +61,13 @@ pip install git+https://github.com/kobimusic/dettato
 dettato song.mp3 -o out/        # -> out/song.mid + out/song.json
 ```
 
-The weights download from the Hugging Face Hub on first use ([the Dettato collection](https://huggingface.co/collections/kobimusic/dettato)).
+The weights download from the Hugging Face Hub on first use ([the dettato collection](https://huggingface.co/collections/kobimusic/dettato)).
 
-![Beethoven, Symphony No. 5, i.: Dettato's MIDI, one lane per instrument track plus timpani](docs/figures/example_tracks.png)
+![Beethoven, Symphony No. 5, i.: dettato's MIDI, one lane per instrument track plus timpani](docs/figures/example_tracks.png)
 
 ## Models
 
-Four models, 28.1M parameters in all, collected in [kobimusic/Dettato](https://huggingface.co/collections/kobimusic/dettato). Each has its own model card:
+Four models, 28.1M parameters in all, collected in the [dettato collection](https://huggingface.co/collections/kobimusic/dettato). Each has its own model card:
 
 | stage | model | parameters | what it does |
 |---|---|---|---|
