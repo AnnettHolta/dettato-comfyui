@@ -10,11 +10,13 @@ pip install git+https://github.com/kobimusic/dettato
 dettato song.mp3 -o out/        # -> out/song.mid + out/song.json
 ```
 
-The weights download from the Hugging Face Hub on first use.
+The weights download from the Hugging Face Hub on first use ([the Dettato collection](https://huggingface.co/collections/kobimusic/dettato)).
+
+![Beethoven, Symphony No. 5, i.: Dettato's MIDI, one lane per instrument track plus timpani](docs/figures/example_tracks.png)
 
 ## Models
 
-Four models, 28.1M parameters in all. Each has its own model card:
+Four models, 28.1M parameters in all, collected in [kobimusic/Dettato](https://huggingface.co/collections/kobimusic/dettato). Each has its own model card:
 
 | stage | model | parameters | what it does |
 |---|---|---|---|
@@ -33,6 +35,10 @@ note-onset, note-frame, note-offset and drum F1.
 |---|---|---|---|---|---|---|
 | **Dettato transcriber + drums** | 20.3M | **59.2** (95% 57.9-60.6) | **67.2** | **77.9** | **44.8** | **47.1** |
 | MuScriptor | 1.3B | 45.1 | 48.6 | 70.2 | 27.8 | 34.0 |
+
+![Composite and per-measure F1, Dettato vs MuScriptor](docs/figures/benchmark.png)
+
+![Composite by benchmark set](docs/figures/results_by_set.png)
 
 On the eight MuScriptor sets alone: 58.4, against 44.6 for MuScriptor and 41.1 for YourMT3+ (the paper's numbers). Per-set tables
 are on the [dettato](https://huggingface.co/kobimusic/dettato) and [dettato-drums](https://huggingface.co/kobimusic/dettato-drums)
@@ -85,6 +91,8 @@ Set `DETTATO_WEIGHTS` to a folder holding the four model repos (`dettato/`, `det
 
 ## How it works
 
+![The pipeline: transcriber, evidence repairer, grouper and drum model](docs/figures/pipeline.png)
+
 1. **Transcriber.** A pitch-equivariant lane network reads a harmonic log-frequency spectrogram and gives onset, frame and offset
    probabilities for every key, for two voices per key, at 20 ms. The song is processed in overlapping 8 s windows; notes come
    from peak picking.
@@ -110,6 +118,9 @@ Set `DETTATO_WEIGHTS` to a folder holding the four model repos (`dettato/`, `det
 - Instrument names are only roughly right: on real jazz about a quarter of a saxophone's or lead guitar's
   notes can land in the piano's track, synth-heavy music is named less reliably, and a concert band gets rough names.
 - No drums for sources recorded below 40 kHz.
+
+The example recordings in the figures are in the public domain: Beethoven's Symphony No. 5 and Grieg's Piano Concerto by Musopen
+(via Wikimedia Commons) and *The Stars and Stripes Forever* by the United States Marine Band.
 
 ## Licence
 
