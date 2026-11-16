@@ -20,8 +20,10 @@ dettato is four models in a chain. The transcriber (15.3M parameters) finds the 
 them using the transcriber's evidence. The grouper (2.9M) puts the notes into instrument tracks, and the drum model (5.0M) writes
 the drums. The code and the weights are under Apache-2.0, so commercial use is fine.
 
-**Mostly synthetic training data.** The transcriber was trained mostly on synthetic audio. The grouper and the drum model also
-use some public research datasets, and their model cards list them. No benchmark recording
+**No copyrighted recordings.** dettato was trained on a mix of synthetic instrument recordings and CC solo instruments from the
+URMP dataset. The rest of the instruments morph together around 20 soundfonts, using the
+[soundfont babies](https://kobi.music/research/making-soundfont-babies) technique I published. The vocals and the other
+augmentation are CC data too, and the grouper and drum model cards list the CC research datasets they use. No benchmark recording
 was used for training.
 
 **What to expect.** It is hard to know how well it will work for your music from benchmarks alone, so I would try it first. The
