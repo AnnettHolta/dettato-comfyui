@@ -36,9 +36,12 @@ note-onset, note-frame, note-offset and drum F1.
 | **Dettato transcriber + drums** | 20.3M | **59.2** (95% 57.9-60.6) | **67.2** | **77.9** | **44.8** | **47.1** |
 | MuScriptor | 1.3B | 45.1 | 48.6 | 70.2 | 27.8 | 34.0 |
 
-![Composite and per-measure F1, Dettato vs MuScriptor](docs/figures/benchmark.png)
+![Composite F1 on all nine benchmark sets, and every system on every set it reports](docs/figures/bench_all_sets.png)
 
-![Composite by benchmark set](docs/figures/results_by_set.png)
+On the three sets Mirelo A2M v1.1 Pro reports (PHENICX-Anechoic, RWC Classical, RWC Royalty-Free), with all four systems: dettato
+60.8, Mirelo A2M 56.1 (self-reported), MuScriptor 47.4, YourMT3+ 45.7.
+
+![The three sets Mirelo A2M reports: composite and each measure for dettato, Mirelo A2M, MuScriptor and YourMT3+](docs/figures/bench_mirelo_sets.png)
 
 On the eight MuScriptor sets alone: 58.4, against 44.6 for MuScriptor and 41.1 for YourMT3+ (the paper's numbers). Per-set tables
 are on the [dettato](https://huggingface.co/kobimusic/dettato) and [dettato-drums](https://huggingface.co/kobimusic/dettato-drums)
