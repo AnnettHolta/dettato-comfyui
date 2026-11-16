@@ -8,51 +8,51 @@
   <a href="https://huggingface.co/kobimusic"><img alt="Hugging Face: kobimusic" src="https://img.shields.io/badge/Hugging%20Face-kobimusic-FFD21E?logo=huggingface&logoColor=000"></a>
   <a href="https://kobi.music"><img alt="kobi.music" src="https://img.shields.io/badge/web-kobi.music-B73E6A"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=fff">
-  <img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-4A4A48">
 </p>
 
-KobiMusic's **dettato** audio-to-MIDI transcriber: any recording in, a multi-track MIDI file out. It writes every note on
-all 88 keys, puts each note in a track named after its instrument, and adds a drum track for drum kits and orchestral
-percussion, with timpani written at their pitch. On nine public benchmark sets it beats MuScriptor 1.3B, the next best
-open model, by 14 points of composite F1 (59.2 vs 45.1) at about 1/65 of its size, and on the three sets Mirelo publishes it
-scores a little above Mirelo A2M v1.1 Pro, a closed model (60.8 vs 56.1).
+KobiMusic's **dettato** is an audio to MIDI transcriber. You give it a recording and it writes a MIDI file, with one track for
+each instrument and a drum track. On nine public benchmark sets it beats MuScriptor 1.3B, which is the next best open model. It
+scores 59.2 composite F1 and MuScriptor scores 45.1. On the three sets that Mirelo publishes, it also scores a bit higher than
+Mirelo A2M v1.1 Pro, which is a closed model (60.8 to 56.1). The part I benchmarked is 20M parameters, and MuScriptor is about 65
+times bigger.
 
-dettato is four small models in a chain: a **transcriber** (15.3M parameters) that hears the notes, an **evidence repairer**
-(4.9M) that corrects them from the transcriber's own evidence, a **grouper** (2.9M) that builds the instrument tracks, and a
-**drum model** (5.0M); the benchmark figures are the transcriber and the drum model, 20M parameters. The weights are open
-under Apache-2.0, commercial use included, in the [dettato collection](https://huggingface.co/collections/kobimusic/dettato).
-Its training audio is synthetic, rendered from MIDI, apart from fine-tunes on public research datasets that each model card
-lists; no benchmark recording was used for training.
+dettato is four models in a chain. The transcriber (15.3M parameters) finds the notes. The evidence repairer (4.9M) fixes
+them using the transcriber's evidence. The grouper (2.9M) puts the notes into instrument tracks, and the drum model (5.0M) writes
+the drums. The code and the weights are under Apache-2.0, so commercial use is fine.
 
-**What to expect.** Benchmarks only go so far: try it on your own music before you rely on it. Splitting instruments into
-the right tracks is its weakest step; on real jazz, for example, a part of a saxophone's notes can land in the piano's track.
-It writes performance MIDI: notes at the times they are played, not quantised to a beat grid or laid out as notation. For
-something you can play from, such as sheet music, [Songscription](https://www.songscription.ai) and [Klangio](https://klang.io)
-are excellent tools.
+**Mostly synthetic training data.** The transcriber was trained mostly on synthetic audio. The grouper and the drum model also
+use some public research datasets, and their model cards list them. No benchmark recording
+was used for training.
 
-![Composite F1 on all nine benchmark sets, and every system on every set it reports](docs/figures/bench_all_sets.png)
+**What to expect.** It is hard to know how well it will work for your music from benchmarks alone, so I would try it first. The
+weakest step is putting the notes into the instrument tracks they belong in. For instance, on jazz recordings a quarter of the saxophone
+notes can land in the piano track. It also writes performance MIDI. This means the notes keep the timing of the recording, and
+they are not quantized to a beat. If you want something you can play from, like sheet music, I would recommend
+[Songscription](https://www.songscription.ai) or [Klangio](https://klang.io). They are both great tools.
 
-Nine public benchmark sets: the eight of the MuScriptor paper's Table 2 (Bach10, Dagstuhl ChoirSet, PHENICX-Anechoic, RWC
-Popular, Classical, Genre, Jazz and Royalty-Free) plus Slakh2100 test, scored by that paper's rules. The composite is the mean of
-note-onset, note-frame, note-offset and drum F1.
+![Composite F1 on all nine benchmark sets, and each system on each set it reports](docs/figures/bench_all_sets.png)
+
+The benchmark is the eight sets from Table 2 of the MuScriptor paper, plus the Slakh2100 test set. The eight sets are Bach10,
+Dagstuhl ChoirSet, PHENICX-Anechoic, RWC Popular, RWC Classical, RWC Genre, RWC Jazz and RWC Royalty-Free. I scored them with the
+rules from that paper. The composite is the mean of the note onset, note frame, note offset and drum F1.
 
 | system | parameters | composite | onset | frame | offset | drums |
 |---|---|---|---|---|---|---|
 | **dettato transcriber + drums** | 20.3M | **59.2** (95% 57.9-60.6) | **67.2** | **77.9** | **44.8** | **47.1** |
 | MuScriptor | 1.3B | 45.1 | 48.6 | 70.2 | 27.8 | 34.0 |
 
-On the three sets Mirelo A2M v1.1 Pro reports (PHENICX-Anechoic, RWC Classical, RWC Royalty-Free), with all four systems: dettato
-60.8, Mirelo A2M 56.1 (self-reported), MuScriptor 47.4, YourMT3+ 45.7.
+Mirelo A2M v1.1 Pro reports three of the sets: PHENICX-Anechoic, RWC Classical and RWC Royalty-Free. On those three, dettato
+scores 60.8. Mirelo A2M scores 56.1 (Mirelo published that number), MuScriptor scores 47.4 and YourMT3+ scores 45.7.
 
 ![The three sets Mirelo A2M reports: composite and each measure for dettato, Mirelo A2M, MuScriptor and YourMT3+](docs/figures/bench_mirelo_sets.png)
 
-On the eight MuScriptor sets alone: 58.4, against 44.6 for MuScriptor and 41.1 for YourMT3+ (the paper's numbers). Per-set tables
-are on the [dettato](https://huggingface.co/kobimusic/dettato) and [dettato-drums](https://huggingface.co/kobimusic/dettato-drums)
-cards.
+On the eight MuScriptor sets alone, dettato scores 58.4. MuScriptor scores 44.6 and YourMT3+ scores 41.1, which are the numbers
+from the paper. The tables for each set are on the [dettato](https://huggingface.co/kobimusic/dettato) and
+[dettato-drums](https://huggingface.co/kobimusic/dettato-drums) cards.
 
-What was measured: the table scores the transcriber's notes and the drum model's hits. The evidence repairer was measured on its own
-(+0.30 composite with the transcriber's base network in front) and the grouper on an internal track benchmark; see their cards.
-The four models chained as this package runs them have not been scored as one system yet.
+The table scores the notes from the transcriber and the hits from the drum model. I measured the evidence repairer alone
+(+0.30 composite with the base network of the transcriber in front). The grouper was measured on my own track benchmark, and their
+cards have the details. I have not scored the four models as one chain yet, the way this package runs them.
 
 ## Install
 
@@ -84,7 +84,7 @@ Four models, 28.1M parameters in all, collected in the [dettato collection](http
 dettato song.mp3 other.wav folder/ -o out/
 ```
 
-- Takes any number of files and folders (searched recursively; the folder structure is kept under `out/`).
+- Takes any number of files and folders. Folders are searched recursively, and the folder structure is kept under `out/`.
 - Writes `out/<name>.mid` and `out/<name>.json` (the tracks, note counts, the tuning estimate, which drum model ran).
 - Uses the GPU when there is one (`--device cpu` to force the CPU).
 
@@ -109,7 +109,7 @@ for path in paths:
     model.transcribe(path).save_midi(path + ".mid")
 ```
 
-Each stage can also be used on its own (`dettato.transcriber`, `dettato.evidence`, `dettato.grouper`, `dettato.drums`); the model
+Each stage can also be used on its own (`dettato.transcriber`, `dettato.evidence`, `dettato.grouper`, `dettato.drums`). The model
 cards show how.
 
 ### Weights offline
@@ -122,15 +122,15 @@ Set `DETTATO_WEIGHTS` to a folder holding the four model repos (`dettato/`, `det
 ![The pipeline: transcriber, evidence repairer, grouper and drum model](docs/figures/pipeline.png)
 
 1. **Transcriber.** A pitch-equivariant lane network reads a harmonic log-frequency spectrogram and gives onset, frame and offset
-   probabilities for every key, for two voices per key, at 20 ms. The song is processed in overlapping 8 s windows; notes come
+   probabilities for every key, for two voices per key, at 20 ms. The song is processed in overlapping 8 s windows, and notes come
    from peak picking.
 2. **Evidence repairer.** A note-level transformer reads each note together with the transcriber's evidence for it (its probability
    maps around the note and its last hidden state) and decides which notes to keep, where they start and end, and which notes are
    missing.
 3. **Grouper.** The recording's tuning is estimated and corrected, the transcriber's internal features are gathered at every
    repaired note, and a note-level transformer gives each note an instrument and a track embedding. Notes are clustered into
-   tracks; a track is kept only when it is clearly its own instrument, and tracks with the same instrument are merged.
-4. **Drums.** A small drum-kit model and an orchestral-percussion model; a router that listens to the whole recording picks one.
+   tracks. A track is kept only when it is clearly its own instrument, and tracks with the same instrument are merged.
+4. **Drums.** A small drum-kit model and an orchestral-percussion model. A router listens to the whole recording and picks one.
    The drum model needs audio recorded at 40 kHz or more and is skipped for lower-rate sources.
 
 ## Requirements
@@ -138,11 +138,11 @@ Set `DETTATO_WEIGHTS` to a folder holding the four model repos (`dettato/`, `det
 - Python 3.10+, PyTorch 2.2+. A CUDA GPU is recommended: on an RTX 5060 (8 GB) a 5-minute song takes about 40 s and peaks under
   4 GB of GPU memory, which grows with the song's length. The CPU works but is slow (a 15 s clip took 87 s on a laptop CPU,
   model loading included).
-- Audio is read with `soundfile`; formats it cannot read (m4a / aac, some mp3s) go through `ffmpeg`, which must then be on the PATH.
+- Audio is read with `soundfile`. Formats it cannot read (m4a / aac, some mp3s) go through `ffmpeg`, which must then be on the PATH.
 
 ## Limits
 
-- Pitched notes cover the 88 piano keys; at most two notes on the same key at once.
+- Pitched notes cover the 88 piano keys, with at most two notes on the same key at once.
 - Instrument names are only roughly right: on real jazz about a quarter of a saxophone's or lead guitar's
   notes can land in the piano's track, synth-heavy music is named less reliably, and a concert band gets rough names.
 - No drums for sources recorded below 40 kHz.
@@ -153,7 +153,7 @@ The example recordings in the figures are in the public domain: Beethoven's Symp
 ## Licence
 
 Code and model weights: Apache-2.0 (see [LICENSE](LICENSE) and [NOTICE](NOTICE)). The model cards list the datasets each model was
-trained with and their licences; some of the grouper's and the drum model's training datasets carry non-commercial terms.
+trained with and their licences. Some of the grouper's and the drum model's training datasets carry non-commercial terms.
 
 ## Citation
 
