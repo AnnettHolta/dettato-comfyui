@@ -162,7 +162,7 @@ trained with and their licences. Some of the grouper's and the drum model's trai
 ```bibtex
 @software{dettato2026,
   title  = {Dettato: multi-instrument audio-to-MIDI transcription},
-  author = {{KobiMusic}},
+  author = {Mills, Nathan},
   year   = {2026},
   url    = {https://github.com/kobimusic/dettato}
 }
