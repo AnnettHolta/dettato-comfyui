@@ -21,7 +21,8 @@ C_H = 368
 N_MAP = 33
 N_EV = N_MAP + 2 * C_H          # 769
 Q = 32.0
-MAX_S_1PASS = 250.0             # longer recordings gather the hidden state in a second pass (bounded memory)
+MAX_S_1PASS = 250.0             # longer recordings: the tap buffers go to host memory (dettato.pipeline), or, in the standalone
+                                # transcribe_with_evidence below, the hidden state is gathered in a second pass (bounded memory)
 
 
 def _map_feats(own, other, L, A, B):
@@ -72,7 +73,7 @@ def map_evidence(maps, L, A, B, S):
 
 @torch.no_grad()
 def gather_hidden(H, L, A, B, device, chunk=4):
-    """H (T, 88, C) -> per note H[A, L] and mean(H[A:B, L]) (float32 numpy), a few lanes at a time."""
+    """H (T, 88, C), on the device or in host memory -> per note H[A, L] and mean(H[A:B, L]) (float32 numpy), a few lanes at a time."""
     N = len(L)
     at = np.zeros((N, C_H), np.float32)
     mean = np.zeros((N, C_H), np.float32)
@@ -81,7 +82,7 @@ def gather_hidden(H, L, A, B, device, chunk=4):
     lanes = np.unique(L)
     for i in range(0, len(lanes), chunk):
         ls = lanes[i:i + chunk]
-        hl = H[:, torch.as_tensor(ls, device=device)].float()
+        hl = H[:, torch.as_tensor(ls, device=H.device)].to(device).float()   # H may live in host memory
         cs = torch.cat([torch.zeros(1, len(ls), C_H, device=device), hl.cumsum(0)], 0)
         for u, l in enumerate(ls):
             sel = np.nonzero(L == l)[0]
@@ -143,29 +144,47 @@ def _std_q(x):
     return np.round(z * Q).astype(np.int8), np.log(sd[:, 0])
 
 
-def transcribe_with_evidence(transcriber, audio, batch=2):
-    """Run the transcriber and compute every note's evidence.
-    -> (notes dict as Transcriber.notes, maps, ev (N, 769) float32 row-aligned with the notes)."""
+def _decode_maps(transcriber, maps):
+    """-> notes, their (key, onset frame, end frame, voice) indices and the 31 map numbers of each."""
     hop = transcriber.hop
-    one_pass = len(audio) <= MAX_S_1PASS * SR
-    maps, buf = transcriber.run(audio, hop_frac=0.25, batch=batch, taps=("hidden",) if one_pass else ())
     res = transcriber.notes(maps)
     T_ = maps["onset"].shape[0]
     L = (res["pitch"] - PITCH_LO).astype(np.int64)
     A = np.clip(np.round(res["onset"] / hop).astype(np.int64), 0, T_ - 1)
     B = np.clip(np.round(res["offset"] / hop).astype(np.int64), A + 1, T_)
     S = res["slot"].astype(np.int64)
-    mf = map_evidence(maps, L, A, B, S)
-    if one_pass:
-        at, mean = gather_hidden(buf.pop("hidden"), L, A, B, transcriber.device)
-    else:
-        at, mean = gather_hidden_2pass(transcriber, audio, L, A, B, batch)
+    return res, L, A, B, map_evidence(maps, L, A, B, S)
+
+
+def _assemble(mf, at, mean):
     qa, la = _std_q(at)
     qm, lmn = _std_q(mean)
     evf = np.concatenate([mf, la[:, None], lmn[:, None]], 1).astype(np.float16)
     evh = np.concatenate([qa, qm], 1)
-    ev = np.concatenate([evf.astype(np.float32), evh.astype(np.float32) / Q], 1)
-    return res, maps, ev
+    return np.concatenate([evf.astype(np.float32), evh.astype(np.float32) / Q], 1)
 
 
-__all__ = ["transcribe_with_evidence", "map_evidence", "N_EV", "C_H"]
+def evidence_from_run(transcriber, maps, H):
+    """The transcriber's maps and hidden state H (T, 88, C float16, on the device or in host memory), both averaged over all
+    windows -> (notes dict as Transcriber.notes, ev (N, 769) float32 row-aligned with the notes)."""
+    res, L, A, B, mf = _decode_maps(transcriber, maps)
+    at, mean = gather_hidden(H, L, A, B, transcriber.device)
+    return res, _assemble(mf, at, mean)
+
+
+def transcribe_with_evidence(transcriber, audio, batch=2):
+    """Run the transcriber (its own pass) and compute every note's evidence.
+    -> (notes dict as Transcriber.notes, maps, ev (N, 769) float32 row-aligned with the notes).
+    ``Dettato.transcribe`` does not call this: it runs the transcriber once for the repairer and the grouper together and uses
+    ``evidence_from_run``."""
+    one_pass = len(audio) <= MAX_S_1PASS * SR
+    maps, buf = transcriber.run(audio, hop_frac=0.25, batch=batch, taps=("hidden",) if one_pass else ())
+    if one_pass:
+        res, ev = evidence_from_run(transcriber, maps, buf.pop("hidden"))
+        return res, maps, ev
+    res, L, A, B, mf = _decode_maps(transcriber, maps)
+    at, mean = gather_hidden_2pass(transcriber, audio, L, A, B, batch)
+    return res, maps, _assemble(mf, at, mean)
+
+
+__all__ = ["transcribe_with_evidence", "evidence_from_run", "map_evidence", "N_EV", "C_H"]

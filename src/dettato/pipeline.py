@@ -1,6 +1,8 @@
 """The whole system: audio file -> instrument-named MIDI tracks + a drum track.
 
-    transcriber (notes, two voices per key)
+    tuning (estimated first; the audio is resampled onto A440 when it sits clearly off it)
+      -> transcriber (notes, two voices per key). ONE network pass over the audio feeds both stages below: every window's output
+         is averaged for the repairer, and every other window's for the grouper's features
       -> evidence repairer (drops wrong notes, fixes onsets / ends, inserts missed notes, reading the transcriber's own evidence)
       -> grouper (assigns every note to an instrument track and names the track)
     drum model (drum-kit and orchestral percussion hits; only for sources recorded at >= 40 kHz)
@@ -14,8 +16,15 @@ import numpy as np
 import torch
 
 from . import audio as A
+from .evidence.features import MAX_S_1PASS
+from .grouper import retune
 
 MIN_END_S = 0.03            # every pitched note lasts at least 30 ms before grouping
+HOST_BUF_AFTER_S = MAX_S_1PASS   # above this length the transcriber's tap buffers (3 float16 arrays of T x 88 x 368, ~10 MB per
+                                 # second of audio: 2.4 GB at 250 s, 3.5 GB at 6 min) live in host memory instead of on the GPU.
+                                 # Windows are added on the device in a ~50 MB sliding region and every frame is copied out once
+                                 # it is final, so GPU memory stays bounded (a 6-minute song fits the 8 GB card), the cost is
+                                 # a few GB of host RAM and one device-to-host copy, and there is still only one network pass.
 
 
 def default_device() -> str:
@@ -83,6 +92,27 @@ class Dettato:
                    DrumTranscriber.from_pretrained(device), device)
 
     @torch.no_grad()
+    def pitched(self, x, batch: int = 2):
+        """The pitched part of the pipeline on 16 kHz mono audio x: tuning -> one transcriber pass -> evidence repairer -> grouper.
+        -> (repaired notes, transcriber notes, repairer info, tracks, grouper info), all times on x's axis."""
+        delta, strength, shift, r = retune.ratio(x)
+        y = retune.resample(x, r) if shift else x
+        host = len(y) > HOST_BUF_AFTER_S * 16000 and str(self.device).startswith("cuda")
+        # every 2 s: all windows (the repairer: maps + hidden); every 4 s: the windows the grouper reads (maps + hidden + stem)
+        maps, bufs, (smaps, sbufs) = self.transcriber.run(
+            y, hop_frac=0.25, batch=batch, taps=("hidden",), sub_hop_frac=0.5, sub_taps=("hidden", "stem"),
+            buf_device="cpu" if host else None)
+        rep, res, rinfo = self.repairer.from_run(self.transcriber, maps, bufs.pop("hidden"))   # notes on y's time axis
+        del maps, bufs
+        notes = np.stack([rep["onset"], np.maximum(rep["offset"], rep["onset"] + MIN_END_S), rep["pitch"].astype(np.float64)], 1)
+        if str(self.device).startswith("cuda"):
+            torch.cuda.empty_cache()
+        groups, ginfo = self.grouper.group(y, notes, self.transcriber, tuning=(delta, strength, shift, r), run=(smaps, sbufs))
+        if r != 1.0:                                    # the groups come back on x's axis already; so do these two
+            rep, res = ({**d, "onset": d["onset"] * r, "offset": d["offset"] * r} for d in (rep, res))
+        return rep, res, rinfo, groups, ginfo
+
+    @torch.no_grad()
     def transcribe(self, source, rate: int | None = None) -> Transcription:
         """source: a path to an audio file, or a mono float32 array with its sample ``rate``."""
         from .drums import MIN_SOURCE_RATE
@@ -94,11 +124,7 @@ class Dettato:
                 raise ValueError("pass the sample rate with an array")
             name, a = "<array>", A.Audio(np.asarray(source, np.float32), int(rate))
         x = a.at(16000)
-        rep, _, rinfo = self.repairer(self.transcriber, x)
-        notes = np.stack([rep["onset"], np.maximum(rep["offset"], rep["onset"] + MIN_END_S), rep["pitch"].astype(np.float64)], 1)
-        if str(self.device).startswith("cuda"):
-            torch.cuda.empty_cache()
-        groups, ginfo = self.grouper.group(x, notes, self.transcriber)
+        _, _, rinfo, groups, ginfo = self.pitched(x)
         tracks = [Track(g["instrument"].replace("_", " "), int(g["program"]), np.asarray(g["notes"], np.float64)) for g in groups]
         info = {"notes": {"transcribed": rinfo["transcribed"], "dropped": rinfo["dropped"], "inserted": rinfo["inserted"],
                           "grouped": int(sum(len(t.notes) for t in tracks))},

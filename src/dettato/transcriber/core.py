@@ -1,9 +1,10 @@
 """Running the transcriber over a whole recording.
 
-The network sees 8 s windows. A song is covered by overlapping windows (every 2 s, or every 4 s for the grouper's features); each
-window's outputs are weighted by a Hann taper and averaged per 20 ms frame. Besides the six probability maps the same pass can
-average two internal states for the later stages: ``hidden`` (the 368-d input of the output heads, per frame and key) and
-``stem`` (the stem output, the least processed state).
+The network sees 8 s windows. A song is covered by overlapping windows (every 2 s); each window's outputs are weighted by a Hann
+taper and averaged per 20 ms frame. Besides the six probability maps the same pass can average two internal states for the later
+stages: ``hidden`` (the 368-d input of the output heads, per frame and key) and ``stem`` (the stem output, the least processed
+state). The same pass can also return a second average over every other window (every 4 s, the grouper's features), so the
+network runs once per recording.
 """
 from __future__ import annotations
 
@@ -23,6 +24,75 @@ WIN_S = 8.0
 
 def _autocast(device):
     return torch.autocast("cuda", dtype=torch.bfloat16, enabled=str(device).startswith("cuda"))
+
+
+class _HostBuffer:
+    """A (T, 88, C) float16 sum kept in host memory while the windows are added on the device.
+
+    Windows arrive in order of their start, so a frame that lies before the current window's first frame is final: only the
+    frames the current and the next windows touch (``cap`` frames, ~50 MB) live on the device; everything before them is divided
+    by its weight sum (the same float16 division as the on-device path) and copied to the host once. The host array is allocated
+    at its exact size (a pinned allocation would be rounded up to a power of two)."""
+
+    def __init__(self, T, C, device, cap):
+        self.T, self.device, self.cap = T, device, cap
+        self.host = torch.zeros(T, N_KEYS, C, dtype=torch.float16)
+        self.act = torch.zeros(cap, N_KEYS, C, dtype=torch.float16, device=device)
+        self.base = 0                                  # song frame of act[0]
+
+    def add(self, a, b, x, ws):
+        if b > self.base + self.cap:
+            self.flush(a, ws)
+        self.act[a - self.base:b - self.base] += x
+
+    def flush(self, upto, ws):
+        """Finish and move out the frames [base, upto)."""
+        upto = min(upto, self.T)
+        while self.base < upto:
+            n = min(upto - self.base, self.cap)
+            self.host[self.base:self.base + n] = (self.act[:n] / ws[self.base:self.base + n, None, None].half()).cpu()
+            self.act[:self.cap - n] = self.act[n:].clone()
+            self.act[self.cap - n:] = 0
+            self.base += n
+
+
+class _Average:
+    """Running Hann-weighted sums of the six maps and some taps over the windows added to it (see ``Transcriber.run``)."""
+
+    def __init__(self, T, device, taps, host_taps=False, cap=0):
+        self.T, self.device, self.taps, self.host_taps, self.cap = T, device, tuple(taps), host_taps, cap
+        self.P = {k: torch.zeros(T, N_KEYS, device=device) for k in HEADS}
+        self.buf = {}
+        self.wsum = torch.zeros(T, device=device)
+
+    def add(self, a, b, g0, k, wt, pr, tp):
+        for hd in HEADS:
+            self.P[hd][a:b] += pr[hd][k, a - g0:b - g0] * wt[:, None]
+        for name in self.taps:
+            v = tp[name]
+            x = (v[k, :, a - g0:b - g0, :N_KEYS].permute(1, 2, 0).float() * wt[:, None, None]).half()
+            if self.host_taps:
+                if name not in self.buf:
+                    self.buf[name] = _HostBuffer(self.T, v.shape[1], self.device, self.cap)
+                self.buf[name].add(a, b, x, self.wsum.clamp(min=1e-6))
+            else:
+                if name not in self.buf:
+                    self.buf[name] = torch.zeros(self.T, N_KEYS, v.shape[1], device=self.device, dtype=torch.float16)
+                self.buf[name][a:b] += x
+        self.wsum[a:b] += wt
+
+    def finish(self):
+        ws = self.wsum.clamp(min=1e-6)
+        maps = {hd: (self.P[hd] / ws[:, None]).cpu().numpy() for hd in HEADS}
+        out = {}
+        for name, buf in self.buf.items():
+            if self.host_taps:
+                buf.flush(self.T, ws)
+                out[name] = buf.host
+            else:
+                buf /= ws[:, None, None].half()
+                out[name] = buf
+        return maps, out
 
 
 class Transcriber:
@@ -84,35 +154,47 @@ class Transcriber:
             yield ss, probs, {k: box[k] for k in taps}
 
     @torch.no_grad()
-    def run(self, audio, hop_frac=0.25, batch=2, taps=(), pad_batch=False):
-        """-> (maps {head: (T, 88) float32 numpy}, {tap: (T, 88, C) float16 tensor on the device}).
+    def run(self, audio, hop_frac=0.25, batch=2, taps=(), pad_batch=False, sub_hop_frac=None, sub_taps=(), buf_device=None):
+        """-> (maps {head: (T, 88) float32 numpy}, {tap: (T, 88, C) float16 tensor}); with ``sub_hop_frac`` also a third
+        element, the same pair for the sub-run (below).
 
-        Each map / tap is the Hann-weighted mean over the windows covering the frame."""
+        Each map / tap is the Hann-weighted mean over the windows covering the frame.
+
+        sub_hop_frac: a second, coarser average taken from the SAME network outputs, over only the windows whose start (in
+            padded samples) is a multiple of ``round(8 s * sub_hop_frac)``. Those are exactly the windows a separate run with
+            ``hop_frac=sub_hop_frac`` would use, and they are accumulated in the same order, in the same precision and with their
+            own weight sum, so the sub-average equals what that separate run returns (up to the batch size the windows ran in).
+            It must be a multiple of ``hop_frac``. ``sub_taps`` names the taps it returns (it may hold taps ``taps`` lacks).
+        buf_device: where the float16 tap buffers live (default: the model's device). "cpu" keeps them in host memory so a long
+            recording does not need ~10 MB of GPU memory per second of audio: the windows are added on the device in a sliding
+            ~50 MB working region and each frame is moved to the host once, when no later window can touch it (the result is the
+            same, bit for bit)."""
         n = len(audio)
         W, Fw, T, starts, pad, g_pad = self._layout(n, hop_frac)
         w = torch.from_numpy(np.hanning(Fw + 2)[1:-1].astype(np.float32)).to(self.device)
-        P = {k: torch.zeros(T, N_KEYS, device=self.device) for k in HEADS}
-        buf = {}
-        wsum = torch.zeros(T, device=self.device)
-        for ss, pr, tp in self.windows(audio, hop_frac, batch, taps, pad_batch):
+        host = str(buf_device) == "cpu" and self.device.type != "cpu"
+        cap = 2 * Fw                      # on-device working frames of a host-resident tap buffer
+        acc = _Average(T, self.device, taps, host, cap)
+        sub = None
+        if sub_hop_frac is not None:
+            sub_step = max(1, int(round(W * sub_hop_frac)))
+            step = max(1, int(round(W * hop_frac)))
+            if sub_step % step:
+                raise ValueError("sub_hop_frac must be a multiple of hop_frac")
+            sub = _Average(T, self.device, sub_taps, host, cap)
+        want = tuple(dict.fromkeys(tuple(taps) + tuple(sub_taps)))
+        for ss, pr, tp in self.windows(audio, hop_frac, batch, want, pad_batch):
             for k, s0 in enumerate(ss):
                 g0 = self.frame_offset(s0, g_pad)
                 a, b = max(0, g0), min(T, g0 + Fw)
                 if b <= a:
                     continue
                 wt = w[a - g0:b - g0]
-                for hd in HEADS:
-                    P[hd][a:b] += pr[hd][k, a - g0:b - g0] * wt[:, None]
-                for name, v in tp.items():
-                    if name not in buf:
-                        buf[name] = torch.zeros(T, N_KEYS, v.shape[1], device=self.device, dtype=torch.float16)
-                    buf[name][a:b] += (v[k, :, a - g0:b - g0, :N_KEYS].permute(1, 2, 0).float() * wt[:, None, None]).half()
-                wsum[a:b] += wt
-        ws = wsum.clamp(min=1e-6)
-        maps = {hd: (P[hd] / ws[:, None]).cpu().numpy() for hd in HEADS}
-        for name in buf:
-            buf[name] /= ws[:, None, None].half()
-        return maps, buf
+                acc.add(a, b, g0, k, wt, pr, tp)
+                if sub is not None and s0 % sub_step == 0:
+                    sub.add(a, b, g0, k, wt, pr, tp)
+        out = acc.finish()
+        return out if sub is None else (*out, sub.finish())
 
     # ------------------------------------------------------------------ notes
     def notes(self, maps):
