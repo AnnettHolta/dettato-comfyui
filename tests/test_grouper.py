@@ -82,3 +82,18 @@ def test_group(stages):
         seen += n[:, 2].astype(int).tolist()
     assert sorted(seen) == [43, 45, 81, 83]
     assert [len(tr["notes"]) for tr in tracks] == sorted((len(tr["notes"]) for tr in tracks), reverse=True)
+
+
+def test_group_from_a_shared_pass_equals_group(stages):
+    """Dettato.pitched runs the transcriber once; the grouper's features come from its every-other-window average."""
+    g, t = stages
+    x = tones(12.0)
+    notes = np.array([[0.0, 2.0, 45], [2.0, 4.0, 43], [0.5, 1.5, 81], [2.5, 3.5, 83], [5.0, 7.0, 45], [8.0, 11.0, 47]], np.float64)
+    ref_tracks, ref_info = g.group(x, notes, t)
+    tuning = retune.ratio(x)
+    maps, _, (smaps, sbufs) = t.run(x, hop_frac=0.25, taps=("hidden",), sub_hop_frac=0.5, sub_taps=("hidden", "stem"))
+    tracks, info = g.group(x, notes, t, tuning=tuning, run=(smaps, sbufs))
+    assert info == ref_info
+    assert [tr["instrument"] for tr in tracks] == [tr["instrument"] for tr in ref_tracks]
+    for a, b in zip(tracks, ref_tracks):
+        assert np.array_equal(a["notes"], b["notes"])

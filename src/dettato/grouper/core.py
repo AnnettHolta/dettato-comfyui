@@ -2,7 +2,8 @@
 
     notes (onset, offset, pitch) + the audio
       -> tuning normalisation (the audio is resampled onto A440 when it sits clearly off it)
-      -> the transcriber's maps and internal states on that audio, gathered at every note (12 scalars + three 368-d taps)
+      -> the transcriber's maps and internal states on that audio (taken from the one transcriber pass that also fed the evidence
+         repairer: the average over every other of its windows), gathered at every note (12 scalars + three 368-d taps)
       -> the grouper network over 24 s windows (every 12 s): per-note instrument probabilities and track embeddings,
          averaged over the windows that hold the note (weighted towards the window centre)
       -> the decode (decode.py): tracks, each named by one of 73 instruments
@@ -71,7 +72,7 @@ def assign_slots(notes, tnotes):
 
 @torch.no_grad()
 def gather(P, H, S, notes, hop):
-    """Maps P {head: (T, 88)}, hidden state H and stem output S (T, 88, C) at the notes (N, 4) ->
+    """Maps P {head: (T, 88)}, hidden state H and stem output S (T, 88, C; on the device or in host memory) at the notes (N, 4) ->
     meta (N, 12) float32: onset, offset, pitch, slot, onset prob of each voice (max over +-1 frame), frame prob of each voice
          at the onset and averaged over the note, offset prob of each voice (max over the last frame +-1);
     feat (N, 3, C) int8 + fsc (N, 3) float16 per-row scales: H at the onset, H over the note (<= 1 s), S over the first 200 ms."""
@@ -101,6 +102,9 @@ def gather(P, H, S, notes, hop):
                         span_mean(P["frame"]), span_mean(P["frame2"]), mx3(P["offset"], te - 1), mx3(P["offset2"], te - 1)], 1)
     meta = meta.cpu().numpy().astype(np.float32)
 
+    def rows(M, t):                 # M[t, lane] on the device, whichever device M lives on
+        return M[t.to(M.device), lane.to(M.device)].to(dev)
+
     def span(M, cap):
         acc = torch.zeros(N, Cc, device=dev)
         cnt = torch.zeros(N, device=dev)
@@ -108,11 +112,11 @@ def gather(P, H, S, notes, hop):
         for k in range(cap):
             t = t0 + k
             m = (t < lim).float()
-            acc += M[t.clamp(max=T - 1), lane].float() * m[:, None]
+            acc += rows(M, t.clamp(max=T - 1)).float() * m[:, None]
             cnt += m
         return acc / cnt.clamp(min=1)[:, None]
 
-    X = torch.stack([H[t0, lane].float(), span(H, SPAN_CAP), span(S, STEM_SPAN)], 1)
+    X = torch.stack([rows(H, t0).float(), span(H, SPAN_CAP), span(S, STEM_SPAN)], 1)
     sc = X.abs().amax(-1).clamp(min=1e-6) / 127.0
     feat = (X / sc[..., None]).round().clamp(-127, 127).to(torch.int8).cpu().numpy()
     return meta, feat, sc.cpu().numpy().astype(np.float16)
@@ -217,12 +221,18 @@ class Grouper:
 
     # ------------------------------------------------------------------ steps
     def features(self, y, notes, transcriber):
-        """The transcriber's maps / taps on audio y, gathered at the notes (N, 3) (already on y's time axis)."""
+        """The transcriber's maps / taps on audio y (its own pass, a window every 4 s), gathered at the notes (N, 3) (already on
+        y's time axis). ``group`` does not call this: it takes the same averages from the shared pass (``features_from_run``)."""
         maps, taps = transcriber.run(y, hop_frac=0.5, batch=4, taps=("hidden", "stem"), pad_batch=True)
+        return self.features_from_run(maps, taps, notes, transcriber)
+
+    def features_from_run(self, maps, taps, notes, transcriber):
+        """The same from a transcriber pass already made: ``maps`` and ``taps`` {"hidden", "stem"} averaged over the windows that
+        start every 4 s (the sub-run of ``Transcriber.run(y, hop_frac=0.25, sub_hop_frac=0.5, sub_taps=("hidden", "stem"))``)."""
         tn = transcriber.notes(maps)
         own = np.stack([tn["onset"], tn["offset"], tn["pitch"].astype(np.float64), tn["slot"] - 1.0], 1).reshape(-1, 4)
         nt = assign_slots(notes, own)
-        P = {k: torch.from_numpy(v).to(taps["hidden"].device) for k, v in maps.items()}     # where the transcriber ran
+        P = {k: torch.from_numpy(v).to(transcriber.device) for k, v in maps.items()}
         out = gather(P, taps["hidden"], taps["stem"], nt, transcriber.hop)
         del P, taps
         return out
@@ -266,25 +276,40 @@ class Grouper:
         return dict(probs=(acc / ws[:, None]).astype(np.float32), emb=emb.astype(np.float32), h=h, wins=wins, W=W)
 
     # ------------------------------------------------------------------ all of it
-    def group(self, audio16k: np.ndarray, notes: np.ndarray, transcriber):
+    def group(self, audio16k: np.ndarray, notes: np.ndarray, transcriber, tuning=None, run=None):
         """audio16k: the recording (16 kHz mono float32); notes (N, 3): onset s, offset s, MIDI pitch (any order), in the
         recording's time axis; transcriber: a dettato.transcriber.Transcriber (its maps and internal states are features).
+
+        Without ``run`` the tuning is estimated here and the transcriber runs on the retuned audio (a window every 4 s). To share
+        one transcriber pass with the evidence repairer, estimate the tuning first (``retune.ratio``), run the transcriber on the
+        retuned audio y, and pass ``tuning`` = that ``retune.ratio`` result and ``run`` = (maps, taps) of the sub-average of that
+        pass (``features_from_run``). Then ``audio16k`` is y and ``notes`` are on y's time axis; the tracks come back on the
+        original axis (times x r) either way.
 
         -> (tracks, info). tracks: [{"instrument", "program", "notes": (M, 4) [onset, offset, pitch, velocity 1-127]}], the
         largest first; notes sorted by onset."""
         x = np.asarray(audio16k, np.float32)
-        delta, strength, shift, r = retune.ratio(x)
-        y = retune.resample(x, r) if shift else x
         nin = np.array(notes, np.float64).reshape(-1, 3)
-        nin[:, :2] /= r                                            # onto the retuned time axis
-        meta, feat, fsc = self.features(y, nin, transcriber)
+        if run is None:
+            delta, strength, shift, r = retune.ratio(x)
+            y = retune.resample(x, r) if shift else x
+            nin[:, :2] /= r                                        # onto the retuned time axis
+            dur = len(x) / SR
+            meta, feat, fsc = self.features(y, nin, transcriber)
+        else:
+            if tuning is None:
+                raise ValueError("pass the retune.ratio result with a precomputed run")
+            delta, strength, shift, r = tuning
+            dur = len(x) * r / SR
+            y = x                                                  # already the retuned audio, notes already on its axis
+            meta, feat, fsc = self.features_from_run(*run, nin, transcriber)
         song = _Song(y, meta, feat, fsc)
         on, off, pitch = meta[:, 0].astype(np.float64), meta[:, 1].astype(np.float64), meta[:, 2].round().astype(np.int64)
         conf = np.where(meta[:, 3] > 0.5, meta[:, 5], meta[:, 4])
         groups = decode(self.predict(song), (on, off, pitch.astype(np.float64)), self.th, **self.params) if len(on) else []
         tracks = self._tracks(on * r, off * r, pitch, conf, groups)
         info = dict(tuning_cents=round(float(delta), 2), tuning_strength=round(float(strength), 3), retune_cents=round(float(shift), 2),
-                    retune_ratio=float(r), duration_s=round(len(x) / SR, 2), notes_in=len(on),
+                    retune_ratio=float(r), duration_s=round(dur, 2), notes_in=len(on),
                     notes_out=int(sum(len(t["notes"]) for t in tracks)))
         return tracks, info
 

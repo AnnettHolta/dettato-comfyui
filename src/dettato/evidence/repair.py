@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from .. import hub
-from .features import N_EV, transcribe_with_evidence
+from .features import N_EV, evidence_from_run, transcribe_with_evidence
 from .model import L_WIN, Repairer
 
 MAX_WIN = 4096          # windows with more notes than this pass through unchanged
@@ -157,15 +157,24 @@ class EvidenceRepairer:
         return dict(onset=on, offset=off, pitch=c["pitch"].astype(np.int64), inserted=c["kind"] == 1,
                     score=c["score"].astype(np.float32))
 
-    def __call__(self, transcriber, audio, batch=2):
-        """audio: 16 kHz mono float32 -> (repaired notes, transcriber notes, info)."""
-        res, _, ev = transcribe_with_evidence(transcriber, audio, batch=batch)
+    def _run(self, res, ev):
         k, o = input_notes(res)
         e = self.edits(k, ev[o])
         rep = self.apply(k, e)
         info = dict(transcribed=len(k), kept=int((~rep["inserted"]).sum()), inserted=int(rep["inserted"].sum()))
         info["dropped"] = info["transcribed"] - info["kept"]
         return rep, res, info
+
+    def __call__(self, transcriber, audio, batch=2):
+        """audio: 16 kHz mono float32 -> (repaired notes, transcriber notes, info). Runs the transcriber itself."""
+        res, _, ev = transcribe_with_evidence(transcriber, audio, batch=batch)
+        return self._run(res, ev)
+
+    def from_run(self, transcriber, maps, hidden):
+        """The same from a transcriber pass already made: its maps and its hidden state (T, 88, 368 float16, on the device or in
+        host memory), both averaged over every window (``Transcriber.run(audio, hop_frac=0.25, taps=("hidden",))``)."""
+        res, ev = evidence_from_run(transcriber, maps, hidden)
+        return self._run(res, ev)
 
 
 __all__ = ["EvidenceRepairer", "N_EV"]
